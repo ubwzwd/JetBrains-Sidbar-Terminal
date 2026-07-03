@@ -1,0 +1,39 @@
+<idea-plugin>
+    <id>com.ubwzwd.sidebar-terminal</id>
+    <name>Sidebar Terminal</name>
+    <vendor email="ubwzwd@gmail.com">ubwzwd</vendor>
+    <description><![CDATA[
+        Adds a standalone terminal tool window docked to the right sidebar
+        (next to Database), which runs a configurable command on startup.
+        Configure the command in Settings | Tools | Sidebar Terminal.
+    ]]></description>
+    <change-notes><![CDATA[
+        <b>0.4.0</b>
+        <ul>
+            <li>Multiple terminal tabs: use the + button in the tool window title bar; tabs are closeable, each runs the startup command in its own shell</li>
+        </ul>
+        <b>0.3.0</b>
+        <ul>
+            <li>Esc is now reliably delivered to the terminal (intercepted at the IDE event queue level) instead of moving focus back to the editor</li>
+        </ul>
+        <b>0.2.0</b>
+        <ul>
+            <li>Default startup command is now <code>claude</code></li>
+        </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Sidebar Terminal"
+                    anchor="right"
+                    icon="AllIcons.Debugger.Console"
+                    canCloseContents="true"
+                    factoryClass="com.example.sidebarterminal.SidebarTerminalToolWindowFactory"/>
+        <projectConfigurable parentId="tools"
+                             instance="com.example.sidebarterminal.SidebarTerminalConfigurable"
+                             id="com.example.sidebarterminal.SidebarTerminalConfigurable"
+                             displayName="Sidebar Terminal"/>
+    </extensions>
+</idea-plugin>
