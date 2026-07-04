@@ -15,8 +15,10 @@ import com.intellij.terminal.ui.TerminalWidget
 import com.intellij.ui.content.ContentFactory
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellStartupOptions
+import java.awt.AWTEvent
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
+import java.lang.reflect.Proxy
 import javax.swing.SwingUtilities
 import javax.swing.text.JTextComponent
 
@@ -68,22 +70,50 @@ class SidebarTerminalToolWindowFactory : ToolWindowFactory, DumbAware {
      * 直接写入 tty，让 claude 这类 TUI 程序正常响应。
      */
     private fun registerEscapeInterceptor(widget: TerminalWidget, parentDisposable: Disposable) {
-        IdeEventQueue.getInstance().addDispatcher(
-            { event ->
-                if (event is KeyEvent && isEscape(event) && isFocusInTerminal(widget)) {
-                    if (event.id == KeyEvent.KEY_PRESSED) {
-                        widget.ttyConnectorAccessor.executeWithTtyConnector { tty ->
-                            tty.write(byteArrayOf(0x1B))
-                        }
+        val dispatcher = IdeEventQueue.EventDispatcher { event ->
+            if (event is KeyEvent && isEscape(event) && isFocusInTerminal(widget)) {
+                if (event.id == KeyEvent.KEY_PRESSED) {
+                    widget.ttyConnectorAccessor.executeWithTtyConnector { tty ->
+                        tty.write(byteArrayOf(0x1B))
                     }
-                    event.consume()
-                    true
-                } else {
-                    false
                 }
-            },
-            parentDisposable,
-        )
+                event.consume()
+                true
+            } else {
+                false
+            }
+        }
+        addDispatcherCompat(dispatcher, parentDisposable)
+    }
+
+    /**
+     * addDispatcher(EventDispatcher, Disposable) 自 2025.3 (build 253) 起废弃，官方推荐的
+     * NonLockedEventDispatcher 重载在 242~252 上又不存在，编译期无法两头兼顾。
+     * 运行时选择：253+ 用动态代理实现 NonLockedEventDispatcher 走新重载（本拦截器只碰
+     * AWT 焦点和 tty，无需 write-intent 锁），旧版本走原重载；两条路径都经反射调用，
+     * 避免字节码里出现对废弃方法的直接引用（Marketplace verifier 按引用扫描）。
+     */
+    private fun addDispatcherCompat(dispatcher: IdeEventQueue.EventDispatcher, parentDisposable: Disposable) {
+        val queue = IdeEventQueue.getInstance()
+        val nonLockedClass = runCatching {
+            Class.forName("com.intellij.ide.IdeEventQueue\$NonLockedEventDispatcher")
+        }.getOrNull()
+        if (nonLockedClass != null) {
+            val proxy = Proxy.newProxyInstance(nonLockedClass.classLoader, arrayOf(nonLockedClass)) { self, method, args ->
+                when (method.name) {
+                    "dispatch" -> dispatcher.dispatch(args[0] as AWTEvent)
+                    "equals" -> self === args[0]
+                    "hashCode" -> System.identityHashCode(self)
+                    "toString" -> "SidebarTerminal.EscapeInterceptor"
+                    else -> throw UnsupportedOperationException(method.name)
+                }
+            }
+            queue.javaClass.getMethod("addDispatcher", nonLockedClass, Disposable::class.java)
+                .invoke(queue, proxy, parentDisposable)
+        } else {
+            queue.javaClass.getMethod("addDispatcher", IdeEventQueue.EventDispatcher::class.java, Disposable::class.java)
+                .invoke(queue, dispatcher, parentDisposable)
+        }
     }
 
     private fun isEscape(event: KeyEvent): Boolean =
